@@ -36,7 +36,8 @@ class SingleHead {
             new (kqv + 2) KQVModule(channel_count, head_size);
 
             attention_ = (AttentionModule*) malloc(sizeof(AttentionModule));
-            new (attention_) AttentionModule(context_size, true /* is_decoder */, 
+            new (attention_) AttentionModule(context_size, head_size, 
+                    true /* is_decoder */, 
                     kqv[0], kqv[1], kqv[2]);
         }
 

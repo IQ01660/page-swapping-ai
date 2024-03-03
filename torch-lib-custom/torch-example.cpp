@@ -13,21 +13,31 @@
 #include "linear-layer.h"
 #include "single-head.h"
 
+torch::Tensor forward(torch::Tensor&, SingleHead*, KQVModule*, KQVModule*);
+void update_params(SingleHead*, KQVModule*, KQVModule*);
+
+
 namespace F = torch::nn::functional;
 
 /**
  * Hyperparameters
  */
 namespace hyperparams {
-    int pages = 100;
+    // output 
+    int pages = 4;
     int label_count = 3;
+    // input 
     int batch_size = 10;
     int channel_size = 8;
     int context_size = 10;
+    // inner architecture
     int head_size = 4;
     int ffn_inner_layer_size = 100;
     int ffn_external_layer_size = pages;
-    float eta = 0.01;
+    const char* external_non_linearity = "linear";
+    // learning
+    float eta = 1.0f;
+    int epochs = 100;
 }
 
 /**
@@ -50,6 +60,10 @@ void AttentionModule::initTensor(
     // this should yield a square matrix of size (seq_length, seq_length)
     attention->tensor_ = at::matmul(attention->key_->forward(input), 
             attention->query_->forward(input).transpose(-2, -1));
+
+    // scale the attention matrix to reach unit variance
+    attention->tensor_ = 
+        attention->tensor_ * (powf((float) attention->head_size_, -0.5f));
 
     if (attention->is_decoder_) {
         // create the mask for the square tensor product
@@ -96,55 +110,66 @@ float* get_page() {
             hyperparams::pages});
     target = at::softmax(target, -1 /* dimension */); 
 
+    // ========================================
+    // ========================================
+
     // single head of attention
     SingleHead head(
             hyperparams::context_size, 
             hyperparams::channel_size,
             hyperparams::head_size, NULL /* ignore - lazy-init */);
 
-
     KQVModule ffn_inner_layer   (hyperparams::head_size, 
             hyperparams::ffn_inner_layer_size);
     KQVModule ffn_external_layer(hyperparams::ffn_inner_layer_size, 
-            hyperparams::ffn_external_layer_size);
+            hyperparams::ffn_external_layer_size, 
+            hyperparams::external_non_linearity);
 
-    // TODO: get a single forward() function
-    torch::Tensor single_head_result = head.forward(&input);
-    auto inner_layer_out = ffn_inner_layer.forward(&single_head_result);
-    auto external_layer_out = ffn_external_layer.forward(&inner_layer_out);
-
-    // TODO: Do normalization
     // TODO: Add bias to linear layers
-    // TODO: Make the first linear layer ReLU
-    // TODO: Make the second linear layer tanh one
     // TODO: Create a training module that takes in training data from stdin
     // TODO: Add multiple heads if needed
 
-    auto loss = F::cross_entropy(external_layer_out, target);
-    std::cout << "---------------" << std::endl;
-    std::cout << loss << std::endl;
-    std::cout << "---------------" << std::endl;
 
-    loss.backward();
+    for (int i = 0; i < hyperparams::epochs; i++) {
 
-    debugging::printMatrix(head.attention_->getTensor());
+        // forward propogation returns the last raw tensor
+        torch::Tensor external_layer_out = forward(input, 
+                &head, &ffn_inner_layer, &ffn_external_layer);
 
-    // TODO: get a single update_params() function
-    head.update_params(hyperparams::eta);
-    ffn_inner_layer.update_params(hyperparams::eta);
-    ffn_external_layer.update_params(hyperparams::eta);
 
-    debugging::printMatrix(head.attention_->getTensor());
+        auto loss = F::cross_entropy(external_layer_out, target);
+        std::cout << "---------------" << std::endl;
+        std::cout << loss << std::endl;
+        std::cout << "---------------" << std::endl;
+        
+        head.attention_->key_->clear_grad();
+        head.attention_->query_->clear_grad();
+        head.attention_->value_->clear_grad();
 
-    // TODO: get a single forward() function
-    single_head_result = head.forward(&input);
-    inner_layer_out = ffn_inner_layer.forward(&single_head_result);
-    external_layer_out = ffn_external_layer.forward(&inner_layer_out);
+        loss.backward();
+        update_params(&head, &ffn_inner_layer, &ffn_external_layer);
+    }
 
-    loss = F::cross_entropy(external_layer_out, target);
-    std::cout << "---------------" << std::endl;
-    std::cout << loss << std::endl;
-    std::cout << "---------------" << std::endl;
-
+    // debugging::printMatrix(head.attention_->getTensor());
     return 0;
+}
+
+torch::Tensor forward(
+        torch::Tensor &input,
+        SingleHead* head, 
+        KQVModule* ffn_inner_layer, 
+        KQVModule* ffn_external_layer) {
+    auto single_head_result = head->forward(&input);
+    auto inner_layer_out = ffn_inner_layer->forward(&single_head_result);
+    torch::Tensor external_layer_out = ffn_external_layer->forward(&inner_layer_out);
+    return single_head_result;
+}
+
+void update_params(
+        SingleHead* head, 
+        KQVModule* ffn_inner_layer, 
+        KQVModule* ffn_external_layer) {
+    head->update_params(hyperparams::eta);
+    // ffn_inner_layer->update_params(hyperparams::eta);
+    // ffn_external_layer->update_params(hyperparams::eta);
 }

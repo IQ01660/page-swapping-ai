@@ -15,11 +15,13 @@ class AttentionModule {
         // AttentionModule() {}
 
         AttentionModule(int context_size, 
+                        int head_size,
                         bool is_decoder, 
                         KQVModule &key,
                         KQVModule &query,
                         KQVModule &value) {
             context_size_ = context_size;
+            head_size_ = head_size;
             is_decoder_ = is_decoder;
             options_ = torch::TensorOptions()
                 .dtype(torch::kFloat32)
@@ -71,6 +73,8 @@ class AttentionModule {
 
         // Sequence size or number of tokens we consider.
         int context_size_;
+        // Single Head size
+        int head_size_;
         // are we masking the matrix or not
         bool is_decoder_;
         // The current set of options for internal tensor.

@@ -5,6 +5,8 @@
  */
 
 // class declarations
+#include <cstdio>
+#include <cstring>
 class AttentionModule;
 
 class KQVModule {
@@ -12,9 +14,14 @@ class KQVModule {
         int channel_count_;
         int head_size_;
 
-        KQVModule(int channel_count, int head_size) {
+        KQVModule(
+                int channel_count, 
+                int head_size, 
+                const char* non_linearity="none") {
+
             channel_count_ = channel_count;
             head_size_ = head_size;
+            non_linearity_ = non_linearity;
             options_ = torch::TensorOptions()
                 .dtype(torch::kFloat32)
                 .layout(torch::kStrided)
@@ -35,7 +42,19 @@ class KQVModule {
         torch::Tensor forward(torch::Tensor *input) {
             torch::Tensor toReturn = at::matmul(*input, tensor_);
             toReturn.requires_grad_(true);
+            toReturn.retain_grad();
+            if (strcmp(non_linearity_, "tanh") == 0) {
+                toReturn = at::tanh(toReturn);
+                toReturn.requires_grad_(true);
+                toReturn.retain_grad();
+            }
             return toReturn;
+        }
+
+        void clear_grad() {
+            tensor_.detach();
+            tensor_.requires_grad_(true);
+            tensor_.retain_grad();
         }
 
         /**
@@ -55,4 +74,7 @@ class KQVModule {
         torch::TensorOptions options_;
         // Internal matrix representation for this transformation.
         torch::Tensor tensor_;
+
+        // non-linearity type after #forward()
+        const char* non_linearity_;
 };
