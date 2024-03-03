@@ -15,6 +15,7 @@
 
 torch::Tensor forward(torch::Tensor&, SingleHead*, KQVModule*, KQVModule*);
 void update_params(SingleHead*, KQVModule*, KQVModule*);
+void clear_grad(SingleHead*, KQVModule*, KQVModule*);
 
 
 namespace F = torch::nn::functional;
@@ -24,7 +25,7 @@ namespace F = torch::nn::functional;
  */
 namespace hyperparams {
     // output 
-    int pages = 4;
+    int pages = 100;
     int label_count = 3;
     // input 
     int batch_size = 10;
@@ -36,8 +37,8 @@ namespace hyperparams {
     int ffn_external_layer_size = pages;
     const char* external_non_linearity = "linear";
     // learning
-    float eta = 1.0f;
-    int epochs = 100;
+    float eta = 1.0f; // TODO: issue with < 1 eta (floats?)
+    int epochs = 1000;
 }
 
 /**
@@ -131,26 +132,26 @@ float* get_page() {
 
 
     for (int i = 0; i < hyperparams::epochs; i++) {
-
         // forward propogation returns the last raw tensor
         torch::Tensor external_layer_out = forward(input, 
                 &head, &ffn_inner_layer, &ffn_external_layer);
 
-
+        // calculate the loss using cross-entropy
         auto loss = F::cross_entropy(external_layer_out, target);
-        std::cout << "---------------" << std::endl;
-        std::cout << loss << std::endl;
-        std::cout << "---------------" << std::endl;
-        
-        head.attention_->key_->clear_grad();
-        head.attention_->query_->clear_grad();
-        head.attention_->value_->clear_grad();
 
+        // print the loss
+        std::cout << loss << std::endl;
+        
+        // clear jacobians (effectively grad().zero_())
+        clear_grad(&head, &ffn_inner_layer, &ffn_external_layer);
+
+        // run back-propogation
         loss.backward();
+
+        // update all params using the jacobians
         update_params(&head, &ffn_inner_layer, &ffn_external_layer);
     }
 
-    // debugging::printMatrix(head.attention_->getTensor());
     return 0;
 }
 
@@ -162,7 +163,7 @@ torch::Tensor forward(
     auto single_head_result = head->forward(&input);
     auto inner_layer_out = ffn_inner_layer->forward(&single_head_result);
     torch::Tensor external_layer_out = ffn_external_layer->forward(&inner_layer_out);
-    return single_head_result;
+    return external_layer_out;
 }
 
 void update_params(
@@ -170,6 +171,17 @@ void update_params(
         KQVModule* ffn_inner_layer, 
         KQVModule* ffn_external_layer) {
     head->update_params(hyperparams::eta);
-    // ffn_inner_layer->update_params(hyperparams::eta);
-    // ffn_external_layer->update_params(hyperparams::eta);
+    ffn_inner_layer->update_params(hyperparams::eta);
+    ffn_external_layer->update_params(hyperparams::eta);
+}
+
+void clear_grad(SingleHead *head,
+        KQVModule* ffn_inner_layer, 
+        KQVModule* ffn_external_layer) {
+    head->attention_->key_->clear_grad();
+    head->attention_->query_->clear_grad();
+    head->attention_->value_->clear_grad();
+
+    ffn_inner_layer->clear_grad();
+    ffn_external_layer->clear_grad();
 }
